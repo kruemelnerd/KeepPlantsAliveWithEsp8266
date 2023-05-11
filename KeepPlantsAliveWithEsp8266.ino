@@ -1,26 +1,12 @@
 #include <ESP8266WiFi.h>  // Include the Wi-Fi library
-#include <PubSubClient.h>
-#include <ArduinoJson.h>
-#include <time.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClient.h>
 #include "secrets.h"
 
 
 
-
-time_t now;
-time_t nowish = 1510592825;
-unsigned long lastMillis = 0;
-unsigned long previousMillis = 0;
-
-#define AWS_IOT_PUBLISH_TOPIC "esp8266_water/pub"
-
-WiFiClientSecure net;
-
-BearSSL::X509List cert(cacert);
-BearSSL::X509List client_crt(client_cert);
-BearSSL::PrivateKey key(privkey);
-
-PubSubClient client(net);
+//Your Domain name with URL path or IP address with path
+const char* serverName = "http://192.168.178.33:8080/api/saveSoilMoisture";
 
 
 int sensor_pin = A0;
@@ -48,19 +34,29 @@ void loop() {
     digitalWrite(LED, LOW);
   }
 
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClient client;
+    HTTPClient http;
+    // Your Domain name with URL path or IP address with path
+    http.begin(client, serverName);
+    http.addHeader("Content-Type", "application/json");
+    // Data to send with HTTP POST
+    String httpRequestData = String("{ \"device\": \"raging rackoon\", \"room\": \"bathroom\", \"numberInRoom\": 4,\"soilMoisture\": ") + output_value + ", \"dateTime\": \"2023-05-10T16:07:09\"}";
+    Serial.print("serverName: ");
+    Serial.println(serverName);
 
-  now = time(nullptr);
-
-  if (!client.connected()) {
-    connectAWS();
+    Serial.print("Request: ");
+    Serial.println(httpRequestData);
+    // Send HTTP POST request
+    int httpResponseCode = http.POST(httpRequestData);
+    Serial.print("ResponseCode: ");
+    Serial.println(httpResponseCode);
+    // Free resources
+    http.end();
   } else {
-    client.loop();
-    if (millis() - lastMillis > 5000) {
-      lastMillis = millis();
-      publishMessage(output_value);
-    }
+    Serial.println("WiFi is Disconnected!");
   }
-  delay(5000);
+  delay(2000);
   //ESP.deepSleep(5e6);
 }
 
@@ -85,72 +81,3 @@ void connectToWifi() {
   Serial.print("IP address:\t");
   Serial.println(WiFi.localIP());  // Send the IP address of the ESP8266 to the computer
 }
-
-
-void NTPConnect(void) {
-  Serial.print("Setting time using SNTP");
-  configTime(TIME_ZONE * 3600, 0 * 3600, "pool.ntp.org", "time.nist.gov");
-  now = time(nullptr);
-  while (now < nowish) {
-    delay(500);
-    Serial.print(".");
-    now = time(nullptr);
-  }
-  Serial.println("done!");
-  struct tm timeinfo;
-  gmtime_r(&now, &timeinfo);
-  Serial.print("Current time: ");
-  Serial.print(asctime(&timeinfo));
-}
-
-void connectAWS(void) {
-  connectToWifi();
-
-  NTPConnect();
-
-  net.setTrustAnchors(&cert);
-  net.setClientRSACert(&client_crt, &key);
-
-  client.setServer(MQTT_HOST, 8883);
-  client.setCallback(messageReceived);
-
-  Serial.println("Connecting to AWS IOT");
-
-  while (!client.connect(THINGNAME)) {
-    Serial.print(".");
-    delay(1000);
-  }
-
-  if (!client.connected()) {
-    Serial.println("AWS IoT Timeout!");
-    return;
-  }
-  // Subscribe to a topic
-  //client.subscribe(AWS_IOT_SUBSCRIBE_TOPIC);
-
-  Serial.println("AWS IoT Connected!");
-}
-
-void messageReceived(char *topic, byte *payload, unsigned int length)
-{
-  Serial.print("Received [");
-  Serial.print(topic);
-  Serial.print("]: ");
-  for (int i = 0; i < length; i++)
-  {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
-}
-
-void publishMessage(int output_value)
-{
-  StaticJsonDocument<200> doc;
-  doc["time"] = millis();
-  doc["output_value"] = output_value;
-  char jsonBuffer[512];
-  serializeJson(doc, jsonBuffer); // print to client
- 
-  client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
-}
-
